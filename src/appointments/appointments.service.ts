@@ -3,7 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Appointment, AppointmentStatus } from './appointment.entity';
 import { Doctor } from '../doctors/doctor.entity';
+import { Patient } from '../patients/patient.entity';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class AppointmentsService {
@@ -12,6 +14,9 @@ export class AppointmentsService {
     private appointmentRepository: Repository<Appointment>,
     @InjectRepository(Doctor)
     private doctorRepository: Repository<Doctor>,
+    @InjectRepository(Patient)
+    private patientRepository: Repository<Patient>,
+    private mailService: MailService,
   ) {}
 
   private toMinutes(time: string): number {
@@ -75,16 +80,28 @@ export class AppointmentsService {
       },
     });
 
-    // Step 5 - If fully booked, return next 3 available dates
+    // Step 5 - If fully booked, email patient and return next 3 dates
     if (bookedCount >= totalSlots) {
       const nextDates = await this.getNextAvailableDates(
         dto.doctorId,
         dto.date,
         totalSlots,
       );
+
+      const patient = await this.patientRepository.findOne({
+        where: { patient_id: dto.patientId },
+      });
+
+      if (patient) {
+        await this.mailService.sendRescheduleEmail(
+          patient.email,
+          patient.first_name,
+          nextDates,
+        );
+      }
+
       return {
-        message:
-          'No slots available on this date. Here are the next available dates:',
+        message: 'No slots available. Next available dates sent to your email.',
         nextAvailableDates: nextDates,
       };
     }
@@ -110,10 +127,7 @@ export class AppointmentsService {
     const hours = Math.floor(reportingMinutes / 60)
       .toString()
       .padStart(2, '0');
-    const mins = (reportingMinutes % 60)
-      .toString()
-
-      .padStart(2, '0');
+    const mins = (reportingMinutes % 60).toString().padStart(2, '0');
     const reportingTime = `${hours}:${mins}`;
 
     // Step 8 - Save appointment
