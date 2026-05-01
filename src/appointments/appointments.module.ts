@@ -8,11 +8,13 @@ import { Doctor } from '../doctors/doctor.entity';
 import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module'; // ← add this
 import { Patient } from '../patients/patient.entity';
+import { DoctorAvailability } from 'src/doctors/doctor-availability.entity';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Appointment, Doctor, Patient]),
     DoctorsModule,
+    DoctorAvailability,
     AuthModule,
     MailModule, // ← add this
   ],

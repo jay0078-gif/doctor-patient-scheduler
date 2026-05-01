@@ -19,13 +19,4 @@ export class Doctor {
 
   @Column()
   password: string; // ← this was missing
-
-  @Column({ type: 'time' })
-  start_time: string;
-
-  @Column({ type: 'time' })
-  end_time: string;
-
-  @Column({ type: 'int' })
-  slot_duration: number;
 }

@@ -1,5 +1,4 @@
 export class CreateAppointmentDto {
-  doctorId: number;
-  patientId: number;
-  date: string;
+  patientName: string;
+  patientMobile: string;
 }
