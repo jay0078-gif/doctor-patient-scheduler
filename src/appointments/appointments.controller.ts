@@ -1,5 +1,4 @@
-import { Controller, Post, Patch, Param, Body }
-from '@nestjs/common';
+import { Controller, Post, Patch, Param, Body } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AppointmentsService } from './appointments.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
