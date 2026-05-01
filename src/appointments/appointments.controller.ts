@@ -1,21 +1,16 @@
-import {
-  Controller,
-  Post,
-  Patch,
-  Param,
-  Body,
-  // UseGuards,
-} from '@nestjs/common';
+import { Controller, Post, Patch, Param, Body }
+from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { AppointmentsService } from './appointments.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
-// import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RescheduleDto } from './dto/reschedule.dto';
 
+@ApiTags('Appointments')
 @Controller()
 export class AppointmentsController {
   constructor(private readonly appointmentsService: AppointmentsService) {}
 
   @Post('doctor/:doctorId/appointment')
-  // @UseGuards(JwtAuthGuard)
   bookAppointment(
     @Param('doctorId') doctorId: number,
     @Body() dto: CreateAppointmentDto,
@@ -24,17 +19,12 @@ export class AppointmentsController {
   }
 
   @Patch('appointments/:id/cancel')
-  // @UseGuards(JwtAuthGuard)
   cancelAppointment(@Param('id') id: number) {
     return this.appointmentsService.cancelAppointment(id);
   }
 
   @Patch('appointments/:id/reschedule')
-  // @UseGuards(JwtAuthGuard)
-  rescheduleAppointment(
-    @Param('id') id: number,
-    @Body() body: { accept: boolean },
-  ) {
+  rescheduleAppointment(@Param('id') id: number, @Body() body: RescheduleDto) {
     return this.appointmentsService.rescheduleAppointment(id, body.accept);
   }
 }
