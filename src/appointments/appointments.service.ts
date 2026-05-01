@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Appointment, AppointmentStatus } from './appointment.entity';
 import { Doctor } from '../doctors/doctor.entity';
-import { DoctorAvailability, DayOfWeek } from '../doctors/doctor-availability.entity';
+import {
+  DoctorAvailability,
+  DayOfWeek,
+} from '../doctors/doctor-availability.entity';
 import { MailService } from '../mail/mail.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 
@@ -97,9 +100,7 @@ export class AppointmentsService {
     const hours = Math.floor(reportingMinutes / 60)
       .toString()
       .padStart(2, '0');
-    const mins = (reportingMinutes % 60)
-      .toString()
-      .padStart(2, '0');
+    const mins = (reportingMinutes % 60).toString().padStart(2, '0');
     return `${hours}:${mins}`;
   }
 
@@ -123,7 +124,6 @@ export class AppointmentsService {
       where: {
         doctor_id: doctorId,
         appointment_date: availableDate,
-        status: AppointmentStatus.BOOKED,
       },
       select: ['slot_number'],
     });
@@ -189,7 +189,6 @@ export class AppointmentsService {
     });
 
     if (todayBooked < MAX_SLOTS_PER_DAY) {
-      // Find first patient in tomorrow's queue
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       const tomorrowStr = tomorrow.toISOString().split('T')[0];
@@ -210,7 +209,8 @@ export class AppointmentsService {
             appointmentId: firstTomorrowPatient.appointments_id,
             patientName: firstTomorrowPatient.patient_name,
             patientMobile: firstTomorrowPatient.patient_mobile,
-            message: 'A slot opened today! Would you like to reschedule to today?',
+            message:
+              'A slot opened today! Would you like to reschedule to today?',
             action: `PATCH /appointments/${firstTomorrowPatient.appointments_id}/reschedule`,
             body: '{ "accept": true } or { "accept": false }',
           },
@@ -228,7 +228,6 @@ export class AppointmentsService {
     if (!appointment) return { message: 'Appointment not found' };
 
     if (!accept) {
-      // Offer to next patient in tomorrow's queue
       const nextPatient = await this.appointmentRepository.findOne({
         where: {
           doctor_id: appointment.doctor_id,
@@ -245,29 +244,49 @@ export class AppointmentsService {
             appointmentId: nextPatient.appointments_id,
             patientName: nextPatient.patient_name,
             patientMobile: nextPatient.patient_mobile,
-            message: 'A slot opened today! Would you like to reschedule to today?',
+            message:
+              'A slot opened today! Would you like to reschedule to today?',
             action: `PATCH /appointments/${nextPatient.appointments_id}/reschedule`,
             body: '{ "accept": true } or { "accept": false }',
           },
         };
       }
 
-      return { message: 'Reschedule declined. Your original appointment is kept.' };
+      return {
+        message: 'Reschedule declined. Your original appointment is kept.',
+      };
     }
 
     // Accept — move to today
     const today = this.getTodayStr();
 
-    const bookedToday = await this.appointmentRepository.find({
+    // Check today still has a free slot
+    const todayBooked = await this.appointmentRepository.count({
       where: {
         doctor_id: appointment.doctor_id,
         appointment_date: today,
         status: AppointmentStatus.BOOKED,
       },
+    });
+
+    if (todayBooked >= MAX_SLOTS_PER_DAY) {
+      return {
+        message:
+          'Sorry, today is now fully booked. Your original appointment is kept.',
+      };
+    }
+
+    // Find next FREE slot today — ALL rows regardless of status
+    // because cancelled slots still occupy the unique constraint
+    const allTodaySlots = await this.appointmentRepository.find({
+      where: {
+        doctor_id: appointment.doctor_id,
+        appointment_date: today,
+      },
       select: ['slot_number'],
     });
 
-    const takenSlots = bookedToday.map((a) => a.slot_number);
+    const takenSlots = allTodaySlots.map((a) => a.slot_number);
     let nextSlot = 1;
     while (takenSlots.includes(nextSlot)) nextSlot++;
 
@@ -277,9 +296,10 @@ export class AppointmentsService {
       nextSlot,
     );
 
-    appointment.appointment_date = today;
-    appointment.slot_number = nextSlot;
-    await this.appointmentRepository.save(appointment);
+    await this.appointmentRepository.update(
+      { appointments_id: id },
+      { appointment_date: today, slot_number: nextSlot },
+    );
 
     return {
       message: 'Appointment rescheduled to today!',
