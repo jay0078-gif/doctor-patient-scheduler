@@ -1,4 +1,4 @@
-import { Controller, Post, Patch, Param, Body } from '@nestjs/common';
+import { Controller, Post, Patch, Get, Param, Body } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AppointmentsService } from './appointments.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
@@ -8,6 +8,11 @@ import { RescheduleDto } from './dto/reschedule.dto';
 @Controller()
 export class AppointmentsController {
   constructor(private readonly appointmentsService: AppointmentsService) {}
+
+  @Get('doctor/:doctorId/availability')
+  getDoctorAvailability(@Param('doctorId') doctorId: number) {
+    return this.appointmentsService.getDoctorAvailability(doctorId);
+  }
 
   @Post('doctor/:doctorId/appointment')
   bookAppointment(

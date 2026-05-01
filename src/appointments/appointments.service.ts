@@ -104,14 +104,120 @@ export class AppointmentsService {
     return `${hours}:${mins}`;
   }
 
-  async bookAppointment(doctorId: number, dto: CreateAppointmentDto) {
+  async getDoctorAvailability(doctorId: number) {
     // Step 1 - Fetch doctor
     const doctor = await this.doctorRepository.findOne({
       where: { doctor_id: doctorId },
     });
     if (!doctor) return { message: 'Doctor not found' };
 
-    // Step 2 - Find next available date within 5 days
+    // Step 2 - Get today
+    const todayStr = this.getTodayStr();
+    const dayOfWeek = this.getDayOfWeek(todayStr);
+
+    // Step 3 - Get all working days for this doctor
+    const allAvailability = await this.availabilityRepository.find({
+      where: { doctor_id: doctorId, is_available: true },
+    });
+
+    const workingDays = allAvailability.map((a) => ({
+      day: a.day_of_week,
+      start_time: a.start_time,
+      end_time: a.end_time,
+      slot_duration_minutes: a.slot_duration,
+    }));
+
+    // Step 4 - Get today's availability
+    const todayAvailability = dayOfWeek
+      ? await this.availabilityRepository.findOne({
+          where: {
+            doctor_id: doctorId,
+            day_of_week: dayOfWeek,
+            is_available: true,
+          },
+        })
+      : null;
+
+    if (!todayAvailability) {
+      return {
+        doctor: {
+          id: doctor.doctor_id,
+          name: `${doctor.first_name} ${doctor.last_name}`,
+          specialty: doctor.specialty,
+        },
+        workingDays,
+        today: {
+          date: todayStr,
+          message: 'Doctor is not available today',
+        },
+      };
+    }
+
+    // Step 5 - Count booked and available slots
+    const bookedCount = await this.appointmentRepository.count({
+      where: {
+        doctor_id: doctorId,
+        appointment_date: todayStr,
+        status: AppointmentStatus.BOOKED,
+      },
+    });
+
+    const availableSlots = MAX_SLOTS_PER_DAY - bookedCount;
+
+    // Step 6 - Generate available time slots list
+    const bookedSlotNumbers = await this.appointmentRepository.find({
+      where: {
+        doctor_id: doctorId,
+        appointment_date: todayStr,
+        status: AppointmentStatus.BOOKED,
+      },
+      select: ['slot_number'],
+    });
+
+    const takenSlots = bookedSlotNumbers.map((a) => a.slot_number);
+    const startMinutes = this.toMinutes(todayAvailability.start_time);
+    const availableTimeSlots: string[] = [];
+
+    for (let slot = 1; slot <= MAX_SLOTS_PER_DAY; slot++) {
+      if (!takenSlots.includes(slot)) {
+        const minutes =
+          startMinutes + (slot - 1) * todayAvailability.slot_duration;
+        const hours = Math.floor(minutes / 60)
+          .toString()
+          .padStart(2, '0');
+        const mins = (minutes % 60).toString().padStart(2, '0');
+        availableTimeSlots.push(`${hours}:${mins}`);
+      }
+    }
+
+    return {
+      doctor: {
+        id: doctor.doctor_id,
+        name: `${doctor.first_name} ${doctor.last_name}`,
+        specialty: doctor.specialty,
+      },
+      workingDays,
+      today: {
+        date: todayStr,
+        day: dayOfWeek,
+        start_time: todayAvailability.start_time,
+        end_time: todayAvailability.end_time,
+        slot_duration_minutes: todayAvailability.slot_duration,
+        totalSlots: MAX_SLOTS_PER_DAY,
+        bookedSlots: bookedCount,
+        availableSlots,
+        status: availableSlots > 0 ? 'Available' : 'Fully Booked',
+        availableTimeSlots,
+      },
+    };
+  }
+
+  async bookAppointment(doctorId: number, dto: CreateAppointmentDto) {
+    const doctor = await this.doctorRepository.findOne({
+      where: { doctor_id: doctorId },
+    });
+    if (!doctor) return { message: 'Doctor not found' };
+
     const availableDate = await this.findAvailableDate(doctorId);
     if (!availableDate) {
       return {
@@ -119,7 +225,6 @@ export class AppointmentsService {
       };
     }
 
-    // Step 3 - Find next available slot number
     const bookedSlots = await this.appointmentRepository.find({
       where: {
         doctor_id: doctorId,
@@ -132,14 +237,12 @@ export class AppointmentsService {
     let nextSlot = 1;
     while (takenSlots.includes(nextSlot)) nextSlot++;
 
-    // Step 4 - Calculate reporting time
     const reportingTime = await this.getReportingTime(
       doctorId,
       availableDate,
       nextSlot,
     );
 
-    // Step 5 - Save appointment
     const appointment = this.appointmentRepository.create({
       doctor_id: doctorId,
       patient_name: dto.patientName,
@@ -170,11 +273,9 @@ export class AppointmentsService {
       return { message: 'Appointment already cancelled' };
     }
 
-    // Cancel it
     appointment.status = AppointmentStatus.CANCELLED;
     await this.appointmentRepository.save(appointment);
 
-    // Check if today now has a free slot
     const today = this.getTodayStr();
     if (appointment.appointment_date !== today) {
       return { message: 'Appointment cancelled successfully.' };
@@ -257,10 +358,8 @@ export class AppointmentsService {
       };
     }
 
-    // Accept — move to today
     const today = this.getTodayStr();
 
-    // Check today still has a free slot
     const todayBooked = await this.appointmentRepository.count({
       where: {
         doctor_id: appointment.doctor_id,
@@ -276,8 +375,6 @@ export class AppointmentsService {
       };
     }
 
-    // Find next FREE slot today — ALL rows regardless of status
-    // because cancelled slots still occupy the unique constraint
     const allTodaySlots = await this.appointmentRepository.find({
       where: {
         doctor_id: appointment.doctor_id,
