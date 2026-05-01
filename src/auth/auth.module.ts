@@ -14,7 +14,7 @@ import { Patient } from '../patients/patient.entity';
     TypeOrmModule.forFeature([Doctor, Patient]),
     PassportModule,
     JwtModule.register({
-      secret: 'your_jwt_secret',
+      secret: process.env.JWT_SECRET ?? 'fallback_secret',
       signOptions: { expiresIn: '1d' },
     }),
   ],

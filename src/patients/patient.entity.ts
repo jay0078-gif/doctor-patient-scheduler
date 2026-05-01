@@ -11,6 +11,9 @@ export class Patient {
   @Column()
   last_name: string;
 
+  @Column({ unique: true, nullable: true })
+  phone: string;
+
   @Column({ type: 'text', nullable: true })
   problem: string;
 
