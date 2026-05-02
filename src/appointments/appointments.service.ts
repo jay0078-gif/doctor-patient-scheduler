@@ -63,22 +63,26 @@ export class AppointmentsService {
   ): Promise<string[]> {
     const totalSlots = await this.getTotalSlots(availability);
 
-    const bookedSlotNumbers = await this.appointmentRepository.find({
+    const allExisting = await this.appointmentRepository.find({
       where: {
         doctor_id: doctorId,
         appointment_date: dateStr,
-        status: AppointmentStatus.BOOKED,
       },
       select: ['slot_number'],
     });
 
-    const takenSlots = bookedSlotNumbers.map((a) => a.slot_number);
+    const takenSlots = allExisting.map((a) => a.slot_number);
     const startMinutes = this.toMinutes(availability.start_time);
+    const endMinutes = this.toMinutes(availability.end_time);
     const timeSlots: string[] = [];
 
     for (let slot = 1; slot <= totalSlots; slot++) {
+      const minutes = startMinutes + (slot - 1) * availability.slot_duration;
+
+      // Stop if beyond end time
+      if (minutes >= endMinutes) break;
+
       if (!takenSlots.includes(slot)) {
-        const minutes = startMinutes + (slot - 1) * availability.slot_duration;
         const hours = Math.floor(minutes / 60)
           .toString()
           .padStart(2, '0');
@@ -114,17 +118,14 @@ export class AppointmentsService {
   }
 
   async getDoctorAvailability(doctorId: number, date?: string) {
-    // Step 1 - Fetch doctor
     const doctor = await this.doctorRepository.findOne({
       where: { doctor_id: doctorId },
     });
     if (!doctor) return { message: 'Doctor not found' };
 
-    // Step 2 - Use provided date or today
     const checkDate = date ?? this.getTodayStr();
     const dayOfWeek = this.getDayOfWeek(checkDate);
 
-    // Step 3 - Get all working days
     const allAvailability = await this.availabilityRepository.find({
       where: { doctor_id: doctorId, is_available: true },
     });
@@ -136,7 +137,6 @@ export class AppointmentsService {
       slot_duration_minutes: a.slot_duration,
     }));
 
-    // Step 4 - Check availability for requested date
     const availability = dayOfWeek
       ? await this.availabilityRepository.findOne({
           where: {
@@ -162,7 +162,6 @@ export class AppointmentsService {
       };
     }
 
-    // Step 5 - Calculate slots
     const totalSlots = await this.getTotalSlots(availability);
 
     const bookedCount = await this.appointmentRepository.count({
@@ -233,7 +232,7 @@ export class AppointmentsService {
     // Step 4 - Calculate total slots
     const totalSlots = await this.getTotalSlots(availability);
 
-    // Step 5 - Check if requested time slot is available
+    // Step 5 - Check if requested time is within working hours
     const requestedTimeMinutes = this.toMinutes(dto.time);
     const startMinutes = this.toMinutes(availability.start_time);
     const endMinutes = this.toMinutes(availability.end_time);
@@ -247,34 +246,32 @@ export class AppointmentsService {
       };
     }
 
-    // Step 6 - Calculate slot number from time
-    const slotNumber =
+    // Step 6 - Calculate slot number from requested time
+    const requestedSlot =
       Math.floor(
         (requestedTimeMinutes - startMinutes) / availability.slot_duration,
       ) + 1;
 
-    // Step 7 - Check if that slot is already booked
-    const existingAppointment = await this.appointmentRepository.findOne({
+    // Step 7 - Get ALL existing slots for this date (booked + cancelled)
+    const allExistingSlots = await this.appointmentRepository.find({
       where: {
         doctor_id: doctorId,
         appointment_date: requestedDate,
-        slot_number: slotNumber,
-        status: AppointmentStatus.BOOKED,
       },
+      select: ['slot_number', 'status'],
     });
 
-    // Step 8 - Check total booked count
-    const bookedCount = await this.appointmentRepository.count({
-      where: {
-        doctor_id: doctorId,
-        appointment_date: requestedDate,
-        status: AppointmentStatus.BOOKED,
-      },
-    });
+    const allTakenSlotNumbers = allExistingSlots.map((a) => a.slot_number);
+    const bookedSlotNumbers = allExistingSlots
+      .filter((a) => a.status === AppointmentStatus.BOOKED)
+      .map((a) => a.slot_number);
 
-    // Step 9 - If slot taken or day full, find next available
-    if (existingAppointment || bookedCount >= totalSlots) {
-      // Find next available dates
+    // Step 8 - Check if requested slot is available
+    const requestedSlotTaken = allTakenSlotNumbers.includes(requestedSlot);
+    const todayFullyBooked = bookedSlotNumbers.length >= totalSlots;
+
+    // Step 9 - If slot taken or day full, find next available dates
+    if (requestedSlotTaken || todayFullyBooked) {
       const nextAvailableDates: {
         date: string;
         availableTimeSlots: string[];
@@ -304,7 +301,9 @@ export class AppointmentsService {
 
         if (!nextAvailability) continue;
 
-        const nextBooked = await this.appointmentRepository.count({
+        const nextTotal = await this.getTotalSlots(nextAvailability);
+
+        const nextBookedCount = await this.appointmentRepository.count({
           where: {
             doctor_id: doctorId,
             appointment_date: nextDateStr,
@@ -312,9 +311,7 @@ export class AppointmentsService {
           },
         });
 
-        const nextTotal = await this.getTotalSlots(nextAvailability);
-
-        if (nextBooked < nextTotal) {
+        if (nextBookedCount < nextTotal) {
           const slots = await this.getAvailableTimeSlots(
             doctorId,
             nextDateStr,
@@ -334,8 +331,9 @@ export class AppointmentsService {
       }
 
       return {
-        message:
-          'No slots available on requested date. Here are the next available dates:',
+        message: requestedSlotTaken
+          ? `Slot at ${dto.time} on ${requestedDate} is already taken. Here are the next available slots:`
+          : `No slots available on ${requestedDate}. Here are the next available slots:`,
         nextAvailableDates,
       };
     }
@@ -344,7 +342,7 @@ export class AppointmentsService {
     const reportingTime = await this.getReportingTime(
       doctorId,
       requestedDate,
-      slotNumber,
+      requestedSlot,
     );
 
     const appointment = this.appointmentRepository.create({
@@ -352,7 +350,7 @@ export class AppointmentsService {
       patient_name: dto.patientName,
       patient_mobile: dto.patientMobile,
       appointment_date: requestedDate,
-      slot_number: slotNumber,
+      slot_number: requestedSlot,
       status: AppointmentStatus.BOOKED,
     });
 
@@ -361,7 +359,7 @@ export class AppointmentsService {
     return {
       message: 'Appointment booked successfully!',
       bookedFor: requestedDate,
-      token: slotNumber,
+      token: requestedSlot,
       reportingTime,
       appointment: saved,
     };

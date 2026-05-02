@@ -8,10 +8,11 @@ import { JwtStrategy } from './jwt.strategy';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Doctor } from '../doctors/doctor.entity';
 import { Patient } from '../patients/patient.entity';
+import { DoctorAvailability } from '../doctors/doctor-availability.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Doctor, Patient]),
+    TypeOrmModule.forFeature([Doctor, Patient, DoctorAvailability]),
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET ?? 'fallback_secret',
@@ -19,7 +20,7 @@ import { Patient } from '../patients/patient.entity';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard], // ← JwtAuthGuard must be here first
-  exports: [JwtAuthGuard], // ← then it can be exported
+  providers: [AuthService, JwtStrategy, JwtAuthGuard],
+  exports: [JwtAuthGuard],
 })
 export class AuthModule {}

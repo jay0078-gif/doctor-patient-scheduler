@@ -3,12 +3,17 @@ import {
   UnauthorizedException,
   ConflictException,
 } from '@nestjs/common';
+
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Doctor } from '../doctors/doctor.entity';
 import { Patient } from '../patients/patient.entity';
+import {
+  DoctorAvailability,
+  DayOfWeek,
+} from '../doctors/doctor-availability.entity';
 import { SignupDoctorDto } from './dto/signup-doctor.dto';
 import { SignupPatientDto } from './dto/signup-patient.dto';
 import { LoginDto } from './dto/login.dto';
@@ -20,6 +25,8 @@ export class AuthService {
     private doctorRepository: Repository<Doctor>,
     @InjectRepository(Patient)
     private patientRepository: Repository<Patient>,
+    @InjectRepository(DoctorAvailability)
+    private availabilityRepository: Repository<DoctorAvailability>,
     private jwtService: JwtService,
   ) {}
 
@@ -31,7 +38,28 @@ export class AuthService {
 
     const hashed = await bcrypt.hash(dto.password, 10);
     const doctor = this.doctorRepository.create({ ...dto, password: hashed });
-    await this.doctorRepository.save(doctor);
+    const saved = await this.doctorRepository.save(doctor);
+
+    const days: DayOfWeek[] = [
+      DayOfWeek.MONDAY,
+      DayOfWeek.TUESDAY,
+      DayOfWeek.WEDNESDAY,
+      DayOfWeek.THURSDAY,
+      DayOfWeek.FRIDAY,
+      DayOfWeek.SATURDAY,
+    ];
+
+    for (const day of days) {
+      await this.availabilityRepository.save({
+        doctor_id: saved.doctor_id,
+        day_of_week: day,
+        start_time: dto.start_time ?? '09:00',
+        end_time: dto.end_time ?? '17:00',
+        slot_duration: dto.slot_duration ?? 16,
+        is_available: true,
+      });
+    }
+
     return { message: 'Doctor registered successfully' };
   }
 
