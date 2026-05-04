@@ -5,6 +5,8 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 
+// ✅ No other imports above this line
+
 export enum AppointmentStatus {
   BOOKED = 'BOOKED',
   CANCELLED = 'CANCELLED',

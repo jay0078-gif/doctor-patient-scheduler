@@ -7,6 +7,7 @@ import {
   Body,
   Query,
   UseGuards,
+  Request,
 } from '@nestjs/common';
 import { ApiTags, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 import { AppointmentsService } from './appointments.service';
@@ -34,8 +35,10 @@ export class AppointmentsController {
   bookAppointment(
     @Param('doctorId') doctorId: number,
     @Body() dto: CreateAppointmentDto,
+    @Request() req, // ← ADDED
   ) {
-    return this.appointmentsService.bookAppointment(doctorId, dto);
+    const patientId = req.user.id; // ← extract from JWT
+    return this.appointmentsService.bookAppointment(doctorId, patientId, dto);
   }
 
   @Patch('appointments/:id/cancel')

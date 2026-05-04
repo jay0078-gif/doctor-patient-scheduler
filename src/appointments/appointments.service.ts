@@ -201,7 +201,10 @@ export class AppointmentsService {
     };
   }
 
-  async bookAppointment(doctorId: number, dto: CreateAppointmentDto) {
+  async bookAppointment(
+    doctorId: number,
+    patientId: number,
+    dto:CreateAppointmentDto) {
     // Step 1 - Fetch doctor
     const doctor = await this.doctorRepository.findOne({
       where: { doctor_id: doctorId },
@@ -227,6 +230,20 @@ export class AppointmentsService {
 
     if (!availability) {
       return { message: 'Doctor is not available on this day' };
+    }
+
+    // Step 4 - Check if patient already has a booking with this doctor on this date
+    const alreadyBooked = await this.appointmentRepository.findOne({
+      where: {
+        doctor_id: doctorId,
+        patient_id: patientId,
+        appointment_date: requestedDate,
+        status: AppointmentStatus.BOOKED,
+      },
+    });
+
+    if (alreadyBooked) {
+      return { message: `You already have an appointment booked on ${requestedDate}. Your token number is #${alreadyBooked.slot_number} and reporting time is ${await this.getReportingTime(doctorId, requestedDate, alreadyBooked.slot_number)}.` };
     }
 
     // Step 4 - Calculate total slots
@@ -347,6 +364,7 @@ export class AppointmentsService {
 
     const appointment = this.appointmentRepository.create({
       doctor_id: doctorId,
+      patient_id: patientId, // ← ADD THIS
       patient_name: dto.patientName,
       patient_mobile: dto.patientMobile,
       appointment_date: requestedDate,
