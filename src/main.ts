@@ -1,34 +1,21 @@
-import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { AppointmentsModule } from './appointments/appointments.module';
-import { DoctorsModule } from './doctors/doctors.module';
-import { AuthModule } from './auth/auth.module';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
-@Module({
-  imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres',
-        host: configService.get('DB_HOST'),
-        port: +configService.get<number>('DB_PORT', 5432),
-        username: configService.get('DB_USERNAME'),
-        password: configService.get('DB_PASSWORD'),
-        database: configService.get('DB_NAME'),
-        synchronize: true, // ← changed to true for deployment
-        autoLoadEntities: true,
-        ssl: {
-          // ← ADD THIS
-          rejectUnauthorized: false,
-        },
-      }),
-      inject: [ConfigService],
-    }),
-    AppointmentsModule,
-    DoctorsModule,
-    AuthModule,
-  ],
-})
-export class AppModule {}
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  const config = new DocumentBuilder()
+    .setTitle('Doctor-Patient Scheduler API')
+    .setDescription('Appointment booking system for doctors and patients')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api', app, document);
+
+  const port = process.env.PORT || 3000;
+  await app.listen(port, '0.0.0.0'); // ← only change here
+}
+bootstrap();
