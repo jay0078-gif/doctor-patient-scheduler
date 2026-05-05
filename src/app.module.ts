@@ -19,9 +19,9 @@ import { AuthModule } from './auth/auth.module';
         database: configService.get('DB_NAME'),
         synchronize: true,
         autoLoadEntities: true,
-        ssl: {
-          rejectUnauthorized: false,
-        },
+        ssl: process.env.NODE_ENV === 'production'
+          ? { rejectUnauthorized: false }
+          : false,
       }),
       inject: [ConfigService],
     }),
