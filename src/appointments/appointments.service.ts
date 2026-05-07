@@ -6,6 +6,7 @@ import { Doctor } from '../doctors/doctor.entity';
 import {
   DoctorAvailability,
   DayOfWeek,
+  AvailabilityType,
 } from '../doctors/doctor-availability.entity';
 import { MailService } from '../mail/mail.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
@@ -24,14 +25,12 @@ export class AppointmentsService {
     private mailService: MailService,
   ) {}
 
-  // ✅ FIX 1: Guard against undefined/null time strings
   private toMinutes(time: string): number {
     if (!time) throw new Error(`toMinutes received invalid value: "${time}"`);
     const [hours, minutes] = time.split(':').map(Number);
     return hours * 60 + minutes;
   }
 
-  // ✅ Returns null for Sunday (index 0), DayOfWeek for Mon–Sat
   private getDayOfWeek(dateStr: string): DayOfWeek | null {
     const days = [
       null,
@@ -49,10 +48,11 @@ export class AppointmentsService {
     return new Date().toISOString().split('T')[0];
   }
 
-  // ✅ Normalize date — TypeORM sometimes returns Date objects, sometimes strings
-  private toDateStr(value: string | Date): string {
+  // ✅ null/undefined guard
+  private toDateStr(value: string | Date | null | undefined): string {
+    if (!value) return '';
     if (value instanceof Date) return value.toISOString().split('T')[0];
-    return value.split('T')[0]; // handles "2026-05-05T00:00:00.000Z" too
+    return value.split('T')[0];
   }
 
   private getTotalSlots(availability: DoctorAvailability): number {
@@ -61,6 +61,61 @@ export class AppointmentsService {
         this.toMinutes(availability.start_time)) /
         availability.slot_duration,
     );
+  }
+
+  // ─────────────────────────────────────────────
+  // KEY METHOD: Get effective availability for a date
+  // Priority: STREAM > WAVE_NON_RECURRING > WAVE_RECURRING
+  // ─────────────────────────────────────────────
+  private async getEffectiveAvailability(
+    doctorId: number,
+    dateStr: string,
+  ): Promise<DoctorAvailability | null> {
+    const dayOfWeek = this.getDayOfWeek(dateStr);
+
+    // Priority 1 — Check STREAM for this day of week
+    if (dayOfWeek) {
+      const stream = await this.availabilityRepository.findOne({
+        where: {
+          doctor_id: doctorId,
+          type: AvailabilityType.STREAM,
+          day_of_week: dayOfWeek,
+          is_available: true,
+        },
+      });
+      if (stream) return stream;
+    }
+
+    // Priority 2 — Check WAVE_NON_RECURRING for this specific date
+    // ✅ FIX: null check on specific_date before calling toDateStr
+    const allNonRecurring = await this.availabilityRepository.find({
+      where: {
+        doctor_id: doctorId,
+        type: AvailabilityType.WAVE_NON_RECURRING,
+        is_available: true,
+      },
+    });
+
+    const nonRecurring = allNonRecurring.find(
+      (a) =>
+        a.specific_date != null && this.toDateStr(a.specific_date) === dateStr,
+    );
+    if (nonRecurring) return nonRecurring;
+
+    // Priority 3 — Fall back to WAVE_RECURRING for this day of week
+    if (dayOfWeek) {
+      const recurring = await this.availabilityRepository.findOne({
+        where: {
+          doctor_id: doctorId,
+          type: AvailabilityType.WAVE_RECURRING,
+          day_of_week: dayOfWeek,
+          is_available: true,
+        },
+      });
+      if (recurring) return recurring;
+    }
+
+    return null;
   }
 
   private async getAvailableTimeSlots(
@@ -98,12 +153,7 @@ export class AppointmentsService {
     dateStr: string,
     slotNumber: number,
   ): Promise<string> {
-    const dayOfWeek = this.getDayOfWeek(dateStr);
-    if (!dayOfWeek) return 'N/A';
-
-    const availability = await this.availabilityRepository.findOne({
-      where: { doctor_id: doctorId, day_of_week: dayOfWeek },
-    });
+    const availability = await this.getEffectiveAvailability(doctorId, dateStr);
     if (!availability) return 'N/A';
 
     const startMinutes = this.toMinutes(availability.start_time);
@@ -131,17 +181,16 @@ export class AppointmentsService {
     });
 
     const workingDays = allAvailability.map((a) => ({
+      type: a.type,
       day: a.day_of_week,
+      specific_date: a.specific_date,
       start_time: a.start_time,
       end_time: a.end_time,
       slot_duration_minutes: a.slot_duration,
+      max_patients: a.max_patients,
     }));
 
-    const availability = dayOfWeek
-      ? await this.availabilityRepository.findOne({
-          where: { doctor_id: doctorId, day_of_week: dayOfWeek, is_available: true },
-        })
-      : null;
+    const availability = await this.getEffectiveAvailability(doctorId, checkDate);
 
     if (!availability) {
       return {
@@ -159,7 +208,6 @@ export class AppointmentsService {
     }
 
     const totalSlots = this.getTotalSlots(availability);
-
     const bookedCount = await this.appointmentRepository.count({
       where: {
         doctor_id: doctorId,
@@ -168,7 +216,10 @@ export class AppointmentsService {
       },
     });
 
-    const availableSlots = totalSlots - bookedCount;
+    const effectiveMax =
+      availability.max_patients > 0 ? availability.max_patients : totalSlots;
+
+    const availableSlots = effectiveMax - bookedCount;
     const availableTimeSlots = await this.getAvailableTimeSlots(
       doctorId,
       checkDate,
@@ -185,9 +236,11 @@ export class AppointmentsService {
       requestedDate: {
         date: checkDate,
         day: dayOfWeek,
+        availabilityType: availability.type,
         start_time: availability.start_time,
         end_time: availability.end_time,
         slot_duration_minutes: availability.slot_duration,
+        max_patients_per_day: effectiveMax,
         totalSlots,
         bookedSlots: bookedCount,
         availableSlots,
@@ -205,20 +258,17 @@ export class AppointmentsService {
     patientId: number,
     dto: CreateAppointmentDto,
   ) {
-    // Step 1 — Validate doctor exists
     const doctor = await this.doctorRepository.findOne({
       where: { doctor_id: doctorId },
     });
     if (!doctor) return { message: 'Doctor not found' };
 
-    // Step 2 — Validate date is not Sunday
     const requestedDate = dto.date;
     const dayOfWeek = this.getDayOfWeek(requestedDate);
     if (!dayOfWeek) {
       return { message: 'Appointments are not available on Sundays' };
     }
 
-    // ✅ FIX 2: Enforce max 5 days ahead from today
     const today = this.getTodayStr();
     const todayDate = new Date(today + 'T00:00:00Z');
     const reqDate = new Date(requestedDate + 'T00:00:00Z');
@@ -234,28 +284,19 @@ export class AppointmentsService {
       };
     }
 
-    // Step 3 — Check doctor availability for that day
-    const availability = await this.availabilityRepository.findOne({
-      where: { doctor_id: doctorId, day_of_week: dayOfWeek, is_available: true },
-    });
+    const availability = await this.getEffectiveAvailability(doctorId, requestedDate);
     if (!availability) {
-      return { message: `Doctor is not available on ${dayOfWeek}` };
+      return { message: `Doctor is not available on ${requestedDate}` };
     }
 
-    // Step 4 — Check if patient already has a booking with this doctor on this date
-    const existingAppointments = await this.appointmentRepository.find({
+    const alreadyBooked = await this.appointmentRepository.findOne({
       where: {
         doctor_id: doctorId,
+        patient_id: patientId,
         appointment_date: requestedDate,
         status: AppointmentStatus.BOOKED,
       },
     });
-
-    // ✅ FIX 3: Compare patient_name since there's no patient_id column in DB
-    // If your appointments table has patient_id, use that instead
-    const alreadyBooked = existingAppointments.find(
-      (a) => a.patient_name === dto.patientName,
-    );
     if (alreadyBooked) {
       const reportingTime = await this.getReportingTime(
         doctorId,
@@ -267,18 +308,22 @@ export class AppointmentsService {
       };
     }
 
-    // Step 5 — Calculate total slots & check if fully booked
-    const totalSlots = this.getTotalSlots(availability);
-    const bookedSlotNumbers = existingAppointments.map((a) => a.slot_number);
-    const todayFullyBooked = bookedSlotNumbers.length >= totalSlots;
+    const bookedCount = await this.appointmentRepository.count({
+      where: {
+        doctor_id: doctorId,
+        appointment_date: requestedDate,
+        status: AppointmentStatus.BOOKED,
+      },
+    });
 
-    // Step 6 — If fully booked, find next available dates
-    if (todayFullyBooked) {
+    const totalSlots = this.getTotalSlots(availability);
+    const effectiveMax =
+      availability.max_patients > 0 ? availability.max_patients : totalSlots;
+
+    if (bookedCount >= effectiveMax) {
       return await this.findNextAvailableDates(doctorId, requestedDate);
     }
 
-    // ✅ FIX 4: Auto-assign next available slot (removed dto.time dependency)
-    // Find the first slot number not yet taken
     const allSlotNums = await this.appointmentRepository.find({
       where: { doctor_id: doctorId, appointment_date: requestedDate },
       select: ['slot_number'],
@@ -291,16 +336,15 @@ export class AppointmentsService {
       return await this.findNextAvailableDates(doctorId, requestedDate);
     }
 
-    // Step 7 — Calculate reporting time
     const reportingTime = await this.getReportingTime(
       doctorId,
       requestedDate,
       nextSlot,
     );
 
-    // Step 8 — Save appointment
     const appointment = this.appointmentRepository.create({
       doctor_id: doctorId,
+      patient_id: patientId,
       patient_name: dto.patientName,
       patient_mobile: dto.patientMobile,
       appointment_date: requestedDate,
@@ -314,6 +358,7 @@ export class AppointmentsService {
       message: 'Appointment booked successfully!',
       bookedFor: requestedDate,
       day: dayOfWeek,
+      availabilityType: availability.type,
       token: nextSlot,
       reportingTime,
       appointmentId: saved.appointments_id,
@@ -331,16 +376,14 @@ export class AppointmentsService {
       const next = new Date(startFrom);
       next.setDate(startFrom.getDate() + i);
       const nextDateStr = next.toISOString().split('T')[0];
-      const nextDay = this.getDayOfWeek(nextDateStr);
 
-      if (!nextDay) continue; // skip Sunday
-
-      const nextAvailability = await this.availabilityRepository.findOne({
-        where: { doctor_id: doctorId, day_of_week: nextDay, is_available: true },
-      });
+      const nextAvailability = await this.getEffectiveAvailability(doctorId, nextDateStr);
       if (!nextAvailability) continue;
 
       const nextTotal = this.getTotalSlots(nextAvailability);
+      const effectiveMax =
+        nextAvailability.max_patients > 0 ? nextAvailability.max_patients : nextTotal;
+
       const nextBookedCount = await this.appointmentRepository.count({
         where: {
           doctor_id: doctorId,
@@ -349,7 +392,7 @@ export class AppointmentsService {
         },
       });
 
-      if (nextBookedCount < nextTotal) {
+      if (nextBookedCount < effectiveMax) {
         const slots = await this.getAvailableTimeSlots(
           doctorId,
           nextDateStr,
@@ -389,20 +432,22 @@ export class AppointmentsService {
     const today = this.getTodayStr();
     const appointmentDateStr = this.toDateStr(appointment.appointment_date);
 
-    // Only trigger reschedule offer if cancelled appointment was for today
     if (appointmentDateStr !== today) {
       return { message: 'Appointment cancelled successfully.' };
     }
 
-    const todayDayOfWeek = this.getDayOfWeek(today);
-    if (!todayDayOfWeek) return { message: 'Appointment cancelled successfully.' };
-
-    const todayAvailability = await this.availabilityRepository.findOne({
-      where: { doctor_id: appointment.doctor_id, day_of_week: todayDayOfWeek, is_available: true },
-    });
+    const todayAvailability = await this.getEffectiveAvailability(
+      appointment.doctor_id,
+      today,
+    );
     if (!todayAvailability) return { message: 'Appointment cancelled successfully.' };
 
     const totalSlots = this.getTotalSlots(todayAvailability);
+    const effectiveMax =
+      todayAvailability.max_patients > 0
+        ? todayAvailability.max_patients
+        : totalSlots;
+
     const todayBooked = await this.appointmentRepository.count({
       where: {
         doctor_id: appointment.doctor_id,
@@ -411,8 +456,7 @@ export class AppointmentsService {
       },
     });
 
-    // If a slot opened up, offer it to tomorrow's first patient
-    if (todayBooked < totalSlots) {
+    if (todayBooked < effectiveMax) {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       const tomorrowStr = tomorrow.toISOString().split('T')[0];
@@ -454,7 +498,6 @@ export class AppointmentsService {
     if (!appointment) return { message: 'Appointment not found' };
 
     if (!accept) {
-      // Offer to next patient in tomorrow's queue
       const appointmentDateStr = this.toDateStr(appointment.appointment_date);
       const nextPatient = await this.appointmentRepository.findOne({
         where: {
@@ -482,21 +525,21 @@ export class AppointmentsService {
       return { message: 'Reschedule declined. Original appointment kept.' };
     }
 
-    // Accept — move to today
     const today = this.getTodayStr();
-    const todayDayOfWeek = this.getDayOfWeek(today);
-    if (!todayDayOfWeek) {
-      return { message: 'Cannot reschedule. Today is a non-working day (Sunday).' };
-    }
-
-    const todayAvailability = await this.availabilityRepository.findOne({
-      where: { doctor_id: appointment.doctor_id, day_of_week: todayDayOfWeek, is_available: true },
-    });
+    const todayAvailability = await this.getEffectiveAvailability(
+      appointment.doctor_id,
+      today,
+    );
     if (!todayAvailability) {
       return { message: 'Cannot reschedule. Doctor not available today.' };
     }
 
     const totalSlots = this.getTotalSlots(todayAvailability);
+    const effectiveMax =
+      todayAvailability.max_patients > 0
+        ? todayAvailability.max_patients
+        : totalSlots;
+
     const todayBooked = await this.appointmentRepository.count({
       where: {
         doctor_id: appointment.doctor_id,
@@ -505,11 +548,10 @@ export class AppointmentsService {
       },
     });
 
-    if (todayBooked >= totalSlots) {
+    if (todayBooked >= effectiveMax) {
       return { message: 'Sorry, today is fully booked. Original appointment kept.' };
     }
 
-    // Find next free slot today
     const allTodaySlots = await this.appointmentRepository.find({
       where: { doctor_id: appointment.doctor_id, appointment_date: today },
       select: ['slot_number'],
