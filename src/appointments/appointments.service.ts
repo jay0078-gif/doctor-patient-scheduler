@@ -139,7 +139,9 @@ export class AppointmentsService {
       const minutes = startMinutes + (slot - 1) * availability.slot_duration;
       if (minutes >= endMinutes) break;
       if (!takenSlots.includes(slot)) {
-        const h = Math.floor(minutes / 60).toString().padStart(2, '0');
+        const h = Math.floor(minutes / 60)
+          .toString()
+          .padStart(2, '0');
         const m = (minutes % 60).toString().padStart(2, '0');
         timeSlots.push(`${h}:${m}`);
       }
@@ -159,7 +161,9 @@ export class AppointmentsService {
     const startMinutes = this.toMinutes(availability.start_time);
     const reportingMinutes =
       startMinutes + (slotNumber - 1) * availability.slot_duration;
-    const h = Math.floor(reportingMinutes / 60).toString().padStart(2, '0');
+    const h = Math.floor(reportingMinutes / 60)
+      .toString()
+      .padStart(2, '0');
     const m = (reportingMinutes % 60).toString().padStart(2, '0');
     return `${h}:${m}`;
   }
@@ -190,7 +194,10 @@ export class AppointmentsService {
       max_patients: a.max_patients,
     }));
 
-    const availability = await this.getEffectiveAvailability(doctorId, checkDate);
+    const availability = await this.getEffectiveAvailability(
+      doctorId,
+      checkDate,
+    );
 
     if (!availability) {
       return {
@@ -284,7 +291,10 @@ export class AppointmentsService {
       };
     }
 
-    const availability = await this.getEffectiveAvailability(doctorId, requestedDate);
+    const availability = await this.getEffectiveAvailability(
+      doctorId,
+      requestedDate,
+    );
     if (!availability) {
       return { message: `Doctor is not available on ${requestedDate}` };
     }
@@ -369,7 +379,8 @@ export class AppointmentsService {
   // HELPER: Find next available dates
   // ─────────────────────────────────────────────
   private async findNextAvailableDates(doctorId: number, fromDate: string) {
-    const nextAvailableDates: { date: string; availableTimeSlots: string[] }[] = [];
+    const nextAvailableDates: { date: string; availableTimeSlots: string[] }[] =
+      [];
     const startFrom = new Date(fromDate);
 
     for (let i = 1; i <= MAX_DAYS_AHEAD && nextAvailableDates.length < 3; i++) {
@@ -377,12 +388,17 @@ export class AppointmentsService {
       next.setDate(startFrom.getDate() + i);
       const nextDateStr = next.toISOString().split('T')[0];
 
-      const nextAvailability = await this.getEffectiveAvailability(doctorId, nextDateStr);
+      const nextAvailability = await this.getEffectiveAvailability(
+        doctorId,
+        nextDateStr,
+      );
       if (!nextAvailability) continue;
 
       const nextTotal = this.getTotalSlots(nextAvailability);
       const effectiveMax =
-        nextAvailability.max_patients > 0 ? nextAvailability.max_patients : nextTotal;
+        nextAvailability.max_patients > 0
+          ? nextAvailability.max_patients
+          : nextTotal;
 
       const nextBookedCount = await this.appointmentRepository.count({
         where: {
@@ -398,7 +414,10 @@ export class AppointmentsService {
           nextDateStr,
           nextAvailability,
         );
-        nextAvailableDates.push({ date: nextDateStr, availableTimeSlots: slots });
+        nextAvailableDates.push({
+          date: nextDateStr,
+          availableTimeSlots: slots,
+        });
       }
     }
 
@@ -440,7 +459,8 @@ export class AppointmentsService {
       appointment.doctor_id,
       today,
     );
-    if (!todayAvailability) return { message: 'Appointment cancelled successfully.' };
+    if (!todayAvailability)
+      return { message: 'Appointment cancelled successfully.' };
 
     const totalSlots = this.getTotalSlots(todayAvailability);
     const effectiveMax =
@@ -477,7 +497,8 @@ export class AppointmentsService {
             appointmentId: firstTomorrowPatient.appointments_id,
             patientName: firstTomorrowPatient.patient_name,
             patientMobile: firstTomorrowPatient.patient_mobile,
-            message: 'A slot opened today! Would you like to reschedule to today?',
+            message:
+              'A slot opened today! Would you like to reschedule to today?',
             action: `PATCH /appointments/${firstTomorrowPatient.appointments_id}/reschedule`,
             body: '{ "accept": true } or { "accept": false }',
           },
@@ -515,7 +536,8 @@ export class AppointmentsService {
             appointmentId: nextPatient.appointments_id,
             patientName: nextPatient.patient_name,
             patientMobile: nextPatient.patient_mobile,
-            message: 'A slot opened today! Would you like to reschedule to today?',
+            message:
+              'A slot opened today! Would you like to reschedule to today?',
             action: `PATCH /appointments/${nextPatient.appointments_id}/reschedule`,
             body: '{ "accept": true } or { "accept": false }',
           },
@@ -549,7 +571,9 @@ export class AppointmentsService {
     });
 
     if (todayBooked >= effectiveMax) {
-      return { message: 'Sorry, today is fully booked. Original appointment kept.' };
+      return {
+        message: 'Sorry, today is fully booked. Original appointment kept.',
+      };
     }
 
     const allTodaySlots = await this.appointmentRepository.find({
