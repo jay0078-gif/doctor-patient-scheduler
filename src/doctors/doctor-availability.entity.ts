@@ -9,6 +9,12 @@ export enum DayOfWeek {
   SATURDAY = 'SATURDAY',
 }
 
+export enum AvailabilityType {
+  WAVE_RECURRING = 'WAVE_RECURRING',
+  WAVE_NON_RECURRING = 'WAVE_NON_RECURRING',
+  STREAM = 'STREAM',
+}
+
 @Entity('doctor_availability')
 export class DoctorAvailability {
   @PrimaryGeneratedColumn()
@@ -17,8 +23,18 @@ export class DoctorAvailability {
   @Column()
   doctor_id: number;
 
-  @Column({ type: 'enum', enum: DayOfWeek })
-  day_of_week: DayOfWeek;
+  @Column({
+    type: 'enum',
+    enum: AvailabilityType,
+    default: AvailabilityType.WAVE_RECURRING,
+  })
+  type: AvailabilityType;
+
+  @Column({ type: 'enum', enum: DayOfWeek, nullable: true })
+  day_of_week: DayOfWeek | null; // ← | null added
+
+  @Column({ type: 'date', nullable: true })
+  specific_date: string | null; // ← | null added
 
   @Column({ type: 'time' })
   start_time: string;
@@ -28,6 +44,9 @@ export class DoctorAvailability {
 
   @Column({ type: 'int' })
   slot_duration: number;
+
+  @Column({ type: 'int', default: 1 })
+  max_patients: number;
 
   @Column({ default: true })
   is_available: boolean;

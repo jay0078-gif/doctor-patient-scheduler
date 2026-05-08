@@ -5,7 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Doctor } from '../doctors/doctor.entity';
 import { Patient } from '../patients/patient.entity';
-import { DoctorAvailability, DayOfWeek } from '../doctors/doctor-availability.entity';
+import { DoctorAvailability, DayOfWeek, AvailabilityType } from '../doctors/doctor-availability.entity';
 import { SignupDoctorDto } from './dto/signup-doctor.dto';
 import { SignupPatientDto } from './dto/signup-patient.dto';
 import { LoginDto } from './dto/login.dto';
@@ -41,10 +41,13 @@ export class AuthService {
     for (const day of days) {
       await this.availabilityRepository.save({
         doctor_id: saved.doctor_id,
+        type: AvailabilityType.WAVE_RECURRING,
         day_of_week: day,
+        specific_date: null,
         start_time: dto.start_time ?? '09:00',
         end_time: dto.end_time ?? '17:00',
         slot_duration: dto.slot_duration ?? 30,
+        max_patients: dto.max_patients ?? 10,
         is_available: true,
       });
     }
